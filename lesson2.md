@@ -163,6 +163,175 @@ EOF
 !!!!! --> Push to git
 
 
+docker-multi-agent:
+
+pipeline {
+    agent none // Do not bind to host agent globally
+
+    stages {
+        stage('Node.js Test') {
+            agent {
+                docker { 
+                    image 'node:20-alpine' 
+                    // Mount host docker socket if inner docker commands are needed
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
+            steps {
+                echo '=== Running in Node.js 20 Container ==='
+                sh 'node -v'
+                sh 'npm -v'
+            }
+        }
+
+        stage('Python Test') {
+            agent {
+                docker { image 'python:3.11-slim' }
+            }
+            steps {
+                echo '=== Running in Python 3.11 Container ==='
+                sh 'python --version'
+                sh 'pip --version'
+            }
+        }
+    }
+}
+
+
+SCRIPT BREAKDOWN:
+
+Section 1: Top-Level Pipeline Strategy
+•	agent none: Tells Jenkins not to allocate a default agent or node for the entire pipeline at the global level. Instead, each individual stage must define its own specific execution environment. This saves resources by avoiding unnecessary worker reservations.
+Section 2: Stage 1 — Isolated Node.js Execution
+•	stage('Node.js Test'): Defines a distinct stage for JavaScript/Node testing.
+•	agent { docker { ... } }: Directs Jenkins to spin up a temporary Docker container specifically for executing the steps inside this stage.
+o	image 'node:20-alpine': Specifies the lightweight Node.js v20 image built on Alpine Linux as the isolated runtime environment.
+o	args '-v /var/run/docker.sock:/var/run/docker.sock': Passes raw arguments to the docker run command. Mounting the host's Docker socket allows processes inside this container to interact with the host's Docker daemon if nested container tasks are required.
+•	steps { ... }:
+o	echo '=== Running in Node.js 20 Container ===': Prints a log header in the console.
+o	sh 'node -v': Checks and prints the installed Node.js version inside the container.
+o	sh 'npm -v': Checks and prints the installed NPM package manager version.
+Section 3: Stage 2 — Isolated Python Execution
+•	stage('Python Test'): Defines a separate stage for Python tasks.
+•	agent { docker { image 'python:3.11-slim' } }: Tells Jenkins to automatically tear down the Node.js container from the previous stage and launch a new, isolated container using the official Python 3.11 Debian-slim image.
+•	steps { ... }:
+o	echo '=== Running in Python 3.11 Container ===': Prints a log header in the console.
+o	sh 'python --version': Prints the installed Python version inside the new container.
+o	sh 'pip --version': Checks and prints the installed Pip package installer version.
+
+
+
+docker-build-job
+
+In terminal:
+
+docker exec -i jenkins bash -c 'cat << "EOF" > /var/jenkins_home/workspace_pipeline.groovy
+pipeline {
+    agent any
+
+    stages {
+        stage("Generate Files") {
+            steps {
+                sh "echo \"from http.server import HTTPServer, BaseHTTPRequestHandler\" > app.py"
+                sh "echo \"class Handler(BaseHTTPRequestHandler):\" >> app.py"
+                sh "echo \"    def do_GET(self):\" >> app.py"
+                sh "echo \"        self.send_response(200)\" >> app.py"
+                sh "echo \"        self.end_headers()\" >> app.py"
+                sh "echo \"        self.wfile.write(b\\\"Jenkins Container Build Successful!\\\")\" >> app.py"
+                sh "echo \"HTTPServer((\\\"0.0.0.0\\\", 8000), Handler).serve_forever()\" >> app.py"
+
+                sh "echo \"FROM python:3.11-slim\" > Dockerfile"
+                sh "echo \"WORKDIR /app\" >> Dockerfile"
+                sh "echo \"COPY app.py .\" >> Dockerfile"
+                sh "echo \"EXPOSE 8000\" >> Dockerfile"
+                sh "echo \"CMD [\\\"python\\\", \\\"app.py\\\"]\" >> Dockerfile"
+            }
+        }
+
+        stage("Build Image") {
+            steps {
+                sh "docker build -t my-web-app:1 ."
+            }
+        }
+
+        stage("Verify Image") {
+            steps {
+                sh "docker images | grep my-web-app"
+            }
+        }
+    }
+}
+EOF'
+
+docker exec jenkins cat /var/jenkins_home/workspace_pipeline.groovy
+
+SCRIPT BREAKDOWN:
+
+Section 1: The Outer Terminal Wrapper
+•	docker exec -i jenkins bash -c '...':
+o	Runs an interactive (-i) Bash shell command inside the running jenkins container.
+o	This bypasses the Jenkins Web UI text box and copy-paste auto-formatters that corrupt Groovy syntax with backslashes.
+•	cat << "EOF" > /var/jenkins_home/workspace_pipeline.groovy:
+o	Uses a Here-Doc (cat << "EOF") to write raw text directly to a file inside the container's volume.
+o	Wrapping "EOF" in quotes prevents Bash on the host server from evaluating variables or special characters before writing to the file.
+•	... EOF': Closes the Here-Doc block and ends the bash -c command string.
+Section 2: Inside the Pipeline — Stage 1: Generate Files
+This stage dynamically builds the source code and configuration required for the web app before compiling the Docker image.
+•	Generating app.py:
+o	sh "echo \"from http.server import ...\" > app.py": Creates a simple Python HTTP server using standard redirect (>) to write the first line.
+o	sh "echo \" ... \" >> app.py": Appends (>>) subsequent lines to construct a basic web server that returns "Jenkins Container Build Successful!" on port 8000.
+•	Generating Dockerfile:
+o	sh "echo \"FROM python:3.11-slim\" > Dockerfile": Sets the lightweight Python base image.
+o	sh "echo \"WORKDIR /app\" >> Dockerfile": Defines /app as the working directory inside the container.
+o	sh "echo \"COPY app.py .\" >> Dockerfile": Copies the generated Python script into the image.
+o	sh "echo \"EXPOSE 8000\" >> Dockerfile": Documents that port 8000 will be opened.
+o	sh "echo \"CMD [\\\"python\\\", \\\"app.py\\\"]\" >> Dockerfile": Specifies the container entrypoint command to run the Python server upon startup.
+Section 3: Inside the Pipeline — Stages 2 & 3: Build & Verify
+•	Stage 2: Build Image
+o	sh "docker build -t my-web-app:1 .": Executes standard docker build to assemble the image from the local Dockerfile and tags it as my-web-app:1.
+•	Stage 3: Verify Image
+o	sh "docker images | grep my-web-app": Queries the host's Docker daemon to verify that my-web-app exists in local storage and prints its image ID and tag to the Jenkins log output.
+
+
+
+docker-sidecar-test
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Redis Integration Test') {
+            steps {
+                script {
+                    // Start Redis in background (Sidecar)
+                    docker.image('redis:alpine').withRun('-p 6379:6379') { c ->
+                        echo "Redis sidecar started with ID: ${c.id}"
+                        
+                        // Execute client test against the sidecar container
+                        docker.image('redis:alpine').inside('--link ' + c.id + ':redis') {
+                            sh 'sleep 2' // Allow initialization
+                            sh 'redis-cli -h redis ping' // Output: PONG
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
