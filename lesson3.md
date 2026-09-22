@@ -45,5 +45,74 @@ o	Branch Specifier: */main or */master.
 
 
 
+Pipeline Script (lesson3-parameterized-job):
+Groovy
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'TARGET_ENV', defaultValue: 'staging', description: 'Deployment target environment')
+        string(name: 'RELEASE_TAG', defaultValue: 'v1.0.0', description: 'Container image release tag')
+        booleanParam(name: 'RUN_TESTS', defaultValue: true, description: 'Force full integration testing')
+    }
+
+    stages {
+        stage('Inspect Parameters') {
+            steps {
+                echo "Deploying Release Tag: ${params.RELEASE_TAG}"
+                echo "Target Environment: ${params.TARGET_ENV}"
+                echo "Execute Test Suite: ${params.RUN_TESTS}"
+            }
+        }
+
+        stage('Simulate Deployment') {
+            steps {
+                sh '''
+                    echo "Deploying release ${RELEASE_TAG} to environment ${TARGET_ENV}..."
+                    echo "Completed at $(date)"
+                '''
+            }
+        }
+    
+curl -X POST "https://a374e65c7ffaefe5-1-8080.spca.r.killercoda.com/job/lesson3-parameterized-job/buildWithParameters?RELEASE_TAG=v2.5.1&TARGET_ENV=production&RUN_TESTS=false"
+
+
+ADD USER
+
+docker exec -u 0 jenkins bash -c 'mkdir -p /var/jenkins_home/init.groovy.d && cat << "EOF" > /var/jenkins_home/init.groovy.d/create-admin.groovy
+import jenkins.model.*
+import hudson.security.*
+
+def instance = Jenkins.get()
+
+def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+def user = hudsonRealm.createAccount("admin", "password")
+user.save()
+instance.setSecurityRealm(hudsonRealm)
+
+def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+strategy.setAllowAnonymousRead(false)
+instance.setAuthorizationStrategy(strategy)
+
+instance.save()
+println "--> SUCCESS: User admin created successfully."
+EOF
+chown -R 1000:1000 /var/jenkins_home/init.groovy.d'
+
+ADD TOKEN
+
+docker exec jenkins bash -c '
+curl -s -u admin:password -X POST "http://localhost:8080/me/descriptorByName/jenkins.security.ApiTokenProperty/generateNewToken?newTokenName=remote-trigger-token"
+'
+
+curl -X POST -i -u "admin:110ee17f01e1dd50d87dd877a31fe082b" \
+  "http://localhost:8080/job/lesson3-parameterized-job/buildWithParameters?TARGET_ENV=production&RELEASE_TAG=v3.0.0"
+
+
+
+
+
+
+
 
 
