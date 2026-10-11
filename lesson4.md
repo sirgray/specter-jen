@@ -286,6 +286,119 @@ curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson5-shell-demo/1/co
 ------------------!!!!! RERUN IF FAILS---------------------
 
 
+*****************************************
+
+# 1. Write Groovy script for Lesson 7-8
+cat << 'EOF' > script.groovy
+import jenkins.model.*
+import hudson.model.*
+import hudson.tasks.Shell
+
+def instance = Jenkins.get()
+def jobName = 'lesson7-error-demo'
+
+def job = instance.getItem(jobName) ?: instance.createProject(FreeStyleProject, jobName)
+
+def errorHandlingShell = '''#!/usr/bin/env bash
+set -euo pipefail
+
+# Define a cleanup function
+cleanup() {
+    echo -e "\n[POST-EXECUTION HOOK] Cleaning up temporary lock files and staging directories..."
+    rm -f /tmp/build_lock.txt
+    echo "[POST-EXECUTION HOOK] Teardown complete."
+}
+
+# Register the trap for EXIT (runs on success OR failure)
+trap cleanup EXIT
+
+echo "=========================================================="
+echo "  LESSON 7-8: ERROR HANDLING & POST-EXECUTION HOOKS"
+echo "=========================================================="
+
+echo "--> Step 1: Creating temporary build lock..."
+touch /tmp/build_lock.txt
+
+echo "--> Step 2: Evaluating system health..."
+MEMORY_CHECK="LOW"
+
+if [ "$MEMORY_CHECK" = "LOW" ]; then
+    echo "ERROR: System memory check failed ($MEMORY_CHECK)!" >&2
+    echo "--> Terminating execution with return code 1..."
+    exit 1
+fi
+
+echo "This line will never be reached because exit 1 halts the script."
+'''
+
+job.getBuildersList().clear()
+job.getBuildersList().add(new Shell(errorHandlingShell))
+job.save()
+
+println "JOB_LESSON7_PROVISIONED"
+EOF
+
+# 2. Deploy to Jenkins
+curl -s -X POST "http://localhost:8080/scriptText" \
+  -u "admin:$API_TOKEN" \
+  --data-urlencode "script@script.groovy"
+rm script.groovy
+
+
+
+
+
+
+
+echo -e "\n--> Triggering Build for lesson7-error-demo..."
+curl -X POST -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson7-error-demo/build"
+
+echo "--> Waiting 3 seconds..."
+sleep 3
+
+echo -e "\n=========================================================="
+echo "  CONSOLE LOG OUTPUT"
+echo "=========================================================="
+curl -s -u "admin:$API_TOKEN" http://localhost:8080/job/lesson7-error-demo/1/consoleText
+
+******************************************************************
+
+
+
+Required Specifications:
+
+Job Details
+•	Job Name: student-lab-resilience
+•	Type: FreeStyleProject (Zero-plugin dependency)
+•	Provisioning Endpoint: HTTP POST to /scriptText via cURL using $API_TOKEN
+
+Shell Execution Logic (Execute shell)
+Your job must execute a multi-line Bash script containing the following four stages:
+
+1.	Safety Flags: Enforce safe script execution (set -euo pipefail).
+
+2.	Post-Execution Trap (trap):
+o	Register an EXIT trap that prints [CLEANUP] Removing temporary artifacts... and removes /tmp/student_build.tmp.
+
+3.	Artifact & File Generation:
+o	Create /tmp/student_build.tmp.
+o	Use a Heredoc (cat << 'EOF' > deployment.json) to write a valid JSON file into the workspace:
+JSON
+{
+  "environment": "STAGING",
+  "service": "api-gateway",
+  "status": "HEALTHY"
+}
+
+
+4.	Conditional Error Logic:
+o	Parse the JSON file or evaluate an environment variable SIMULATE_FAILURE.
+o	If SIMULATE_FAILURE is set to "TRUE", print [ERROR] Simulated pipeline failure detected! to standard error (>&2) and terminate with exit 1.
+o	Otherwise, print [SUCCESS] Deployment manifest generated. and terminate with exit 0.
+
+
+
+
 
 
 
