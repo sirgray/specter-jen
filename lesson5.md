@@ -63,65 +63,7 @@ curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson5-webhook-demo/1/
 
 **********************************************
 
-cat << 'EOF' > script.groovy
-import jenkins.model.*
-import hudson.model.*
-import hudson.tasks.Shell
 
-def instance = Jenkins.get()
-def jobName = 'lesson5-webhook-demo'
-def job = instance.getItem(jobName)
-
-def parsingShellScript = '''#!/usr/bin/env bash
-set -euo pipefail
-
-echo "=========================================================="
-echo "  HOURS 3-4: JSON EXTRACTION AND PARSING"
-echo "=========================================================="
-
-# Fallback string parsing (grep + cut) if jq is not present
-EVENT_TYPE=$(echo "${PAYLOAD_JSON}" | grep -o '"event":"[^"]*' | cut -d'"' -f4 || echo "unknown")
-REPOSITORY=$(echo "${PAYLOAD_JSON}" | grep -o '"repo":"[^"]*' | cut -d'"' -f4 || echo "unknown")
-ACTION=$(echo "${PAYLOAD_JSON}" | grep -o '"action":"[^"]*' | cut -d'"' -f4 || echo "none")
-
-echo "Parsed Event      : ${EVENT_TYPE}"
-echo "Parsed Repository : ${REPOSITORY}"
-echo "Parsed Action     : ${ACTION}"
-
-echo -e "\n--> Evaluating Workflow Routing:"
-if [ "${EVENT_TYPE}" = "release" ]; then
-    echo "[ACTION] Production release detected. Initializing artifact deployment..."
-elif [ "${EVENT_TYPE}" = "push" ]; then
-    echo "[ACTION] Source code update detected. Running unit testing suite..."
-else
-    echo "[INFO] Event '${EVENT_TYPE}' requires no secondary tasks."
-fi
-'''
-
-job.getBuildersList().clear()
-job.getBuildersList().add(new Shell(parsingShellScript))
-job.save()
-
-println "LESSON5_HOURS3_4_PROVISIONED"
-EOF
-
-curl -s -X POST "http://localhost:8080/scriptText" \
-  -u "admin:$API_TOKEN" \
-  --data-urlencode "script@script.groovy"
-rm script.groovy
-
-
-RUN Bash:
-
-JSON_RELEASE='{"event":"release","repo":"org/core-service","action":"published"}'
-
-curl -X POST -s -u "admin:$API_TOKEN" \
-  "http://localhost:8080/job/lesson5-webhook-demo/buildWithParameters" \
-  --data-urlencode "PAYLOAD_JSON=${JSON_RELEASE}"
-
-sleep 3
-
-curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson5-webhook-demo/2/consoleText"
 
 
 
