@@ -159,6 +159,118 @@ curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson5-webhook-demo/${
 
 *******************************************************
 
+cat << 'EOF' > script.groovy
+import jenkins.model.*
+import hudson.model.*
+import hudson.tasks.Shell
+
+def instance = Jenkins.get()
+def jobName = 'lesson5-webhook-demo'
+def job = instance.getItem(jobName)
+
+// Add AUTH_TOKEN definition alongside PAYLOAD_JSON
+def tokenParam = new StringParameterDefinition('AUTH_TOKEN', '', 'Shared authentication token')
+def payloadParam = new StringParameterDefinition('PAYLOAD_JSON', '{}', 'Webhook payload')
+
+job.removeProperty(ParametersDefinitionProperty.class)
+job.addProperty(new ParametersDefinitionProperty(tokenParam, payloadParam))
+
+def securedShellScript = '''#!/usr/bin/env bash
+set -euo pipefail
+
+# Define post-execution cleanup trap
+cleanup() {
+    echo -e "\n[CLEANUP] Purging execution memory and temporary files..."
+}
+trap cleanup EXIT
+
+EXPECTED_TOKEN="secure-webhook-secret-99"
+
+echo "=========================================================="
+echo "  HOURS 5-6: SECURITY & TOKEN VALIDATION"
+echo "=========================================================="
+
+echo "--> Step 1: Validating Authentication Token..."
+if [ "${AUTH_TOKEN:-}" != "${EXPECTED_TOKEN}" ]; then
+    echo "[SECURITY ERROR] Invalid or missing auth token! Access denied." >&2
+    exit 1
+fi
+
+echo "[SUCCESS] Token verified. Access granted."
+
+EVENT_TYPE=$(echo "${PAYLOAD_JSON}" | grep -o '"event":"[^"]*' | cut -d'"' -f4 || echo "unknown")
+echo "--> Step 2: Executing task for event type: ${EVENT_TYPE}"
+'''
+
+job.getBuildersList().clear()
+job.getBuildersList().add(new Shell(securedShellScript))
+job.save()
+
+println "LESSON5_HOURS5_6_PROVISIONED"
+EOF
+
+curl -s -X POST "http://localhost:8080/scriptText" \
+  -u "admin:$API_TOKEN" \
+  --data-urlencode "script@script.groovy"
+rm script.groovy
+
+
+1.	Unauthorized Execution Test (Invalid Token):
+Bash:
+
+NEXT_BUILD_NUM=$(curl -s -u "admin:$API_TOKEN" \
+  "http://localhost:8080/job/lesson5-webhook-demo/api/json" \
+  | grep -o '"nextBuildNumber":[^,]*' | cut -d':' -f2)
+
+curl -X POST -s -u "admin:$API_TOKEN" \
+  "http://localhost:8080/job/lesson5-webhook-demo/buildWithParameters?AUTH_TOKEN=wrong-token" \
+  --data-urlencode 'PAYLOAD_JSON={"event":"push"}'
+
+sleep 3
+curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson5-webhook-demo/${NEXT_BUILD_NUM}/consoleText"
+
+2.	Authorized Execution Test (Valid Token):
+Bash:
+
+NEXT_BUILD_NUM=$(curl -s -u "admin:$API_TOKEN" \
+  "http://localhost:8080/job/lesson5-webhook-demo/api/json" \
+  | grep -o '"nextBuildNumber":[^,]*' | cut -d':' -f2)
+
+curl -X POST -s -u "admin:$API_TOKEN" \
+  "http://localhost:8080/job/lesson5-webhook-demo/buildWithParameters?AUTH_TOKEN=secure-webhook-secret-99" \
+  --data-urlencode 'PAYLOAD_JSON={"event":"push"}'
+
+sleep 3
+curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson5-webhook-demo//${NEXT_BUILD_NUM}/consoleText"
+
+
+**************************************************
+
+•	Prerequisites: Access to the terminal environment with $API_TOKEN set.
+
+•	Objective: Headlessly provision a webhook receiver job via /scriptText, inject authentication and JSON parsing logic, and verify both authorized and unauthorized trigger attempts via cURL.
+Lab Requirements
+
+You are tasked with building a webhook receiver job named lab-webhook-receiver.
+
+Specifications
+1.	Job Configuration:
+o	Job Type: FreeStyleProject
+o	Parameters:
+	SECRET_KEY: String parameter (Expected value: lab-secret-123)
+	EVENT_PAYLOAD: String parameter containing JSON input
+
+2.	Shell Execution Steps (set -euo pipefail):
+o	Cleanup Hook: Register a trap on EXIT that prints [LAB] Teardown complete.
+o	Authentication: Validate SECRET_KEY. If it does not equal lab-secret-123, print [ERROR] Invalid secret! to stderr (>&2) and exit with status code 1.
+o	Parsing: Extract action and component from EVENT_PAYLOAD.
+o	Output: Print Processing action '<action>' for component '<component>'
+
+
+
+
+
+
 
 
 
