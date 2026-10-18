@@ -157,6 +157,9 @@ echo "=========================================================="
 curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson5-webhook-demo/${NEXT_BUILD_NUM}/consoleText"
 
 
+*******************************************************
+
+
 
 
 
