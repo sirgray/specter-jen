@@ -134,6 +134,29 @@ echo "=========================================================="
 curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson5-webhook-demo/3/consoleText"
 
 
+NEXT BUILD ID DYNAMIC:
+
+# 1. Get the upcoming build number from Jenkins API
+NEXT_BUILD_NUM=$(curl -s -u "admin:$API_TOKEN" \
+  "http://localhost:8080/job/lesson5-webhook-demo/api/json" \
+  | grep -o '"nextBuildNumber":[^,]*' | cut -d':' -f2)
+
+echo "--> Next Build ID will be: ${NEXT_BUILD_NUM}"
+
+# 2. Trigger the build
+curl -X POST -s -u "admin:$API_TOKEN" \
+  "http://localhost:8080/job/lesson5-webhook-demo/buildWithParameters" \
+  --data-urlencode 'PAYLOAD_JSON={"event":"release","repo":"org/core-service","action":"published"}'
+
+sleep 3
+
+# 3. Fetch logs dynamically using $NEXT_BUILD_NUM
+echo -e "\n=========================================================="
+echo "  CONSOLE LOG FOR BUILD #${NEXT_BUILD_NUM}"
+echo "=========================================================="
+curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson5-webhook-demo/${NEXT_BUILD_NUM}/consoleText"
+
+
 
 
 
