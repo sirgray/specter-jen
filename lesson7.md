@@ -242,5 +242,256 @@ sleep 6
 curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson7-parallel-demo/${NEXT_BUILD_NUM}/consoleText"
 
 
+********************************************************
+
+cat << 'EOF' > script.groovy
+import jenkins.model.*
+import hudson.model.*
+import hudson.tasks.Shell
+
+def instance = Jenkins.get()
+def jobName = 'lesson7-parallel-demo'
+def job = instance.getItem(jobName)
+
+String retryShellScript = '''#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=========================================================="
+echo "  HOURS 5-6: NON-BLOCKING TRANSIENT RETRY LOOPS"
+echo "=========================================================="
+
+# Simulated unstable service invocation
+unstable_service_call() {
+    local attempt=$1
+    # Succeeds on attempt 3
+    if [ "${attempt}" -lt 3 ]; then
+        echo "[SERVICE] Connection refused (HTTP 503 Service Unavailable)" >&2
+        return 1
+    fi
+    echo "[SERVICE] HTTP 200 OK - Data synchronized successfully."
+    return 0
+}
+
+# Generic retry wrapper function
+retry_operation() {
+    local max_attempts=$1
+    local delay=$2
+    local attempt=1
+    local exit_code=0
+
+    while [ "${attempt}" -le "${max_attempts}" ]; do
+        echo "--> [ATTEMPT ${attempt}/${max_attempts}] Executing target operation..."
+        
+        # Disable set -e temporarily to evaluate subshell exit codes safely
+        set +e
+        unstable_service_call "${attempt}"
+        exit_code=$?
+        set -e
+
+        if [ "${exit_code}" -eq 0 ]; then
+            echo "[RETRY SUCCESS] Operation succeeded on attempt ${attempt}!"
+            return 0
+        fi
+
+        echo "[RETRY WARNING] Attempt ${attempt} failed with exit code ${exit_code}." >&2
+        if [ "${attempt}" -lt "${max_attempts}" ]; then
+            echo "  [BACKOFF] Waiting ${delay}s before retry..."
+            sleep "${delay}"
+            # Exponential backoff calculation
+            delay=$(( delay * 2 ))
+        fi
+        attempt=$(( attempt + 1 ))
+    done
+
+    echo "[RETRY FATAL] Operation failed after ${max_attempts} attempts." >&2
+    return "${exit_code}"
+}
+
+# Execute operation with 4 max attempts, starting with a 1-second delay
+retry_operation 4 1
+'''
+
+job.getBuildersList().clear()
+job.getBuildersList().add(new Shell(retryShellScript))
+job.save()
+
+println "LESSON7_HOURS5_6_PROVISIONED"
+EOF
+
+curl -s -X POST "http://localhost:8080/scriptText" \
+  -u "admin:$API_TOKEN" \
+  --data-urlencode "script@script.groovy"
+rm script.groovy
+
+
+
+NEXT_BUILD_NUM=$(curl -s -u "admin:$API_TOKEN" \
+  "http://localhost:8080/job/lesson7-parallel-demo/api/json" \
+  | sed -n 's/.*"nextBuildNumber":\([0-9]*\).*/\1/p')
+
+if [ -z "${NEXT_BUILD_NUM}" ]; then
+  NEXT_BUILD_NUM=1
+fi
+
+curl -X POST -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson7-parallel-demo/buildWithParameters"
+
+# Wait for retries and backoff sleeps to finish
+sleep 6
+
+curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson7-parallel-demo/${NEXT_BUILD_NUM}/consoleText"
+
+
+
+
+
+
+cat << 'EOF' > script.groovy
+import jenkins.model.*
+import hudson.model.*
+import hudson.tasks.Shell
+
+def instance = Jenkins.get()
+def jobName = 'lesson7-parallel-demo'
+def job = instance.getItem(jobName)
+
+String fallbackShellScript = '''#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p ./build_out
+
+echo "=========================================================="
+echo "  HOURS 7-8: MULTI-STAGE FALLBACK GATES"
+echo "=========================================================="
+
+PRIMARY_REGION="us-east-1"
+FAILOVER_REGION="us-west-2"
+
+primary_deployment() {
+    echo "--> Attempting deployment to Primary Region (${PRIMARY_REGION})..."
+    # Simulate primary site failure
+    return 1
+}
+
+secondary_fallback_deployment() {
+    echo "--> [FALLBACK ACTIVATED] Deploying to Secondary Region (${FAILOVER_REGION})..."
+    echo '{"active_site": "'"${FAILOVER_REGION}"'", "status": "FAILOVER_SUCCESS"}' > ./build_out/deployment.json
+    echo "[FALLBACK SUCCESS] Secondary site online and routing traffic."
+}
+
+# Execute primary deployment step
+PRIMARY_FAILED=0
+set +e
+primary_deployment
+if [ $? -ne 0 ]; then
+    PRIMARY_FAILED=1
+fi
+set -e
+
+# Route execution based on primary status flag
+if [ "${PRIMARY_FAILED}" -eq 1 ]; then
+    echo "[WARNING] Primary region deployment failed!" >&2
+    secondary_fallback_deployment
+else
+    echo '{"active_site": "'"${PRIMARY_REGION}"'", "status": "PRIMARY_SUCCESS"}' > ./build_out/deployment.json
+    echo "[SUCCESS] Primary region deployment completed."
+fi
+
+echo -e "\n--> Final Deployment State Manifest:"
+cat ./build_out/deployment.json
+'''
+
+job.getBuildersList().clear()
+job.getBuildersList().add(new Shell(fallbackShellScript))
+job.save()
+
+println "LESSON7_HOURS7_8_PROVISIONED"
+EOF
+
+curl -s -X POST "http://localhost:8080/scriptText" \
+  -u "admin:$API_TOKEN" \
+  --data-urlencode "script@script.groovy"
+rm script.groovy
+
+
+
+NEXT_BUILD_NUM=$(curl -s -u "admin:$API_TOKEN" \
+  "http://localhost:8080/job/lesson7-parallel-demo/api/json" \
+  | sed -n 's/.*"nextBuildNumber":\([0-9]*\).*/\1/p')
+
+if [ -z "${NEXT_BUILD_NUM}" ]; then
+  NEXT_BUILD_NUM=1
+fi
+
+curl -X POST -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson7-parallel-demo/buildWithParameters"
+
+sleep 4
+
+curl -s -u "admin:$API_TOKEN" "http://localhost:8080/job/lesson7-parallel-demo/${NEXT_BUILD_NUM}/consoleText"
+
+
+***********************************************************
+
+
+Capstone Objectives
+
+Synthesize all concepts learned in Hours 1–8 by provisioning and executing a self-healing parallel processing engine named lesson7-capstone-pipeline.
+Laboratory Specifications
+
+	Provisioning: Deployed headlessly via Groovy using /scriptText.
+    
+	Parameters:
+	SERVICE_COUNT: String parameter (Default: 3).
+	SIMULATE_FAILURE: String parameter (Default: false).
+	Execution Logic (set -euo pipefail):
+	Process Cleanup Trap: Bind an EXIT trap to kill lingering background subshell PIDs.
+	Parallel Processing: Launch ${SERVICE_COUNT} background subshell workers in parallel.
+	Transient Retries: Each worker attempts service synchronization using a retry loop (3 attempts maximum). If SIMULATE_FAILURE=true, worker 2 exceeds its retry limit.
+	Timeout Watchdog: Run a parallel watchdog process to ensure no subshell exceeds a 5-second runtime window.
+	Fallback Routing: If any worker subshell fails completely, trigger a global fallback recovery routine that writes an emergency status file (./build_out/emergency.json) and flags the build appropriately.
+REST Workspace Verification: Query and display the generated status manifest over HTTP via /ws/.
+
+
+
+
+Extension Challenge: Multithreaded Log Aggregator & Health Auditing
+
+•	Prerequisites: Completion of Lesson 7 Capstone (lesson7-capstone-pipeline).
+•	Objective: Provision an independent auditing job named lesson7-audit-aggregator that launches parallel worker processes, captures individual stdout/stderr log files in real-time, generates an aggregated MD5 integrity audit manifest, and exposes all outputs over the REST API.
+
+Challenge Requirements
+1.	Job Setup:
+o	Job Name: lesson7-audit-aggregator
+o	Type: FreeStyleProject
+o	Parameters:
+	WORKER_COUNT: String parameter (Default: 4)
+	SIMULATE_LATENCY: String parameter (Default: true)
+2.	Execution Script (set -euo pipefail):
+o	Signal Handler Trap: Register an EXIT signal trap that executes cleanup() to kill any dangling subshell PIDs stored in a Bash array.
+o	Parallel Execution & File Redirection: Spawns ${WORKER_COUNT} parallel subshells. Each worker:
+	Writes stdout logs directly to ./logs/worker_${ID}.log.
+	Simulates work (if SIMULATE_LATENCY=true, sleeps for a random duration between 1 and 3 seconds).
+	Writes an individual status JSON payload to ./logs/worker_${ID}.json:
+JSON
+{
+  "worker_id": "<ID>",
+  "pid": "<PID>",
+  "status": "COMPLETED"
+}
+o	Synchronization & Failure Gate:
+	Use a wait loop across all stored PIDs to confirm clean completion.
+	If any subshell fails, log the failing PID to stderr and flag the pipeline.
+o	Aggregated Manifest Generation:
+	Merge all individual JSON payloads into a single runtime manifest: ./build_out/audit_summary.json.
+	Compute an MD5 checksum of ./build_out/audit_summary.json and save it to ./build_out/audit_summary.json.md5.
+o	Console Output: Print the aggregated summary manifest and the MD5 hash digest.
+
+
+
+
+
+
+
+
+
 
 
