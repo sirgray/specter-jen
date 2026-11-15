@@ -313,5 +313,65 @@ fi
 
 *********************************
 
+PRACTICE
+
+Task Set 1: Guided Reinforcement (Core Mechanics)
+Complete these three tasks using the jobs created in Lesson 9:
+1.	Idempotency Verification:
+o	Run snippet (provision_lesson9_worker.groovy) and verify that the Groovy output prints UPDATED_EXISTING_JOB: lesson9-audit-worker instead of CREATED_NEW_JOB.
+o	Query http://localhost:8080/job/lesson9-audit-worker/api/json and confirm that nextBuildNumber is still 3 (meaning historical builds #1 and #2 were preserved).
+2.	Tree-Filtered Artifact Inspection:
+o	Using the ?tree= REST query technique, write a single curl + python3 one-liner that queries lesson9-audit-worker and prints the number, result, and artifacts[relativePath] for all historical builds.
+o	Expected observation: Build #1 lists audit_report.json under artifacts, whereas Build #2 has an empty artifacts list ([]).
+3.	Environment Parameter Routing:
+o	Trigger lesson9-orchestrator with TARGET_ENV=dev and FORCE_FAIL=false.
+o	Confirm in the console output that the downloaded ingested_audit.json contains "environment": "dev".
+
+
+Task Set 2: Applied Engineering Challenge (Extending the Pattern)
+Implement two new production requirements without installing any Jenkins plugins:
+1.	Challenge A — Artifact Checksum Verification (SHA-256):
+o	Update worker_payload.sh so that after generating audit_report.json, it computes its SHA-256 hash and writes it to a second file named audit_report.sha256 (sha256sum audit_report.json > audit_report.sha256).
+o	Update ArtifactArchiver to archive both files (new ArtifactArchiver('audit_report.json,audit_report.sha256')).
+o	Update orchestrator_payload.sh to download both files via REST and run sha256sum -c audit_report.sha256 before reading the JSON. If the checksum fails, abort with exit 1.
+2.	Challenge B — Multi-Environment Fan-Out Loop:
+o	Write an external Bash script that loops over for ENV in dev staging prod; do ... done, triggers lesson9-orchestrator sequentially for each environment, and prints a final summary table showing the parent build number, environment name, and final build result (SUCCESS/FAILURE).
+
+
+Challenge 1: The Flash-Sale Burst & Queue Isolation Incident
+Scenario
+It is 5 minutes before a major flash sale. Two automated upstream services—the Checkout Service (TARGET_ENV=prod) and the Staging Smoke-Test Bot (TARGET_ENV=staging)—trigger lesson9-audit-worker within the exact same second.
+Yesterday, during a similar traffic spike, your team used /lastBuild/api/json to poll results. Because both triggers arrived almost simultaneously, the Staging Smoke-Test Bot accidentally read the Checkout Service's audit_report.json artifact, causing a false deployment gate alarm.
+Your Mission
+Write a pure-Bash verification script (challenge5_burst_isolation.sh) that proves your orchestrator prevents cross-talk under concurrent burst load:
+1.	Simultaneous Dispatch: Fire two buildWithParameters?delay=0sec requests back-to-back (without sleeping between them):
+o	Request A: TARGET_ENV=staging, REQUEST_ID=BURST-STG-<epoch>, FORCE_FAIL=false
+o	Request B: TARGET_ENV=prod, REQUEST_ID=BURST-PRD-<epoch>, FORCE_FAIL=false
+2.	Independent Queue Pinning: Capture both Location: headers (QUEUE_A and QUEUE_B) and resolve each one to its own distinct build number (BUILD_A and BUILD_B), including the 404 fast-eviction fallback if a queue item completes before polling.
+3.	Zero Cross-Talk Assertion: Download audit_report.json from both BUILD_A and BUILD_B into separate local files (audit_A.json and audit_B.json), and programmatically assert:
+o	BUILD_A is not equal to BUILD_B
+o	audit_A.json contains BURST-STG-<epoch> and "environment": "staging"
+o	audit_B.json contains BURST-PRD-<epoch> and "environment": "prod"
+
+
+Challenge 2: The Silent Latency Degradation & Health Gate
+Scenario
+Your release pipeline enforces a strict Service Level Agreement (SLA): lesson9-audit-worker must complete in under 8,000 ms (8 seconds), and at least 3 out of the last 5 builds must be healthy (SUCCESS) before a production promotion is permitted.
+Earlier this week, an infrastructure slowdown caused builds to still exit 0 (SUCCESS), but take 25 seconds—causing downstream API timeouts. Relying only on "result":"SUCCESS" missed the regression completely.
+Your Mission
+Write a pure-Bash pre-release health & SLA gate (challenge6_sla_audit.sh) that queries Jenkins' REST telemetry without downloading full build histories:
+1.	Dispatch & Measure: Trigger a fresh TARGET_ENV=prod build (REQUEST_ID=SLA-<epoch>, delay=0sec), resolve its build number via Location:, and wait for completion.
+2.	SLA Latency Check: Query /${BUILD_NUM}/api/json?tree=number,result,duration and assert two conditions:
+o	result equals SUCCESS
+o	duration (in milliseconds) is strictly less than 8000 ([ "${DURATION}" -lt 8000 ])
+3.	Sliding-Window Health Audit: Query /job/lesson9-audit-worker/api/json?tree=builds[number,result,duration]{0,5} (using Jenkins' {0,5} server-side slice so only the 5 most recent runs are transferred). Count how many of those 5 runs ended in SUCCESS vs. FAILURE, and print a clear PROMOTION APPROVED or PROMOTION BLOCKED decision based on whether SUCCESS >= 3 and the SLA passed.
+
+
+
+
+
+
+
+
 
 
